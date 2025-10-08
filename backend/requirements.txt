@@ -1,0 +1,25 @@
+# Flask backend
+flask
+flask-cors
+flask-socketio
+
+# Machine Learning / Deep Learning
+# Use TF 2.13 (last version supporting batch_shape properly on Windows)
+tensorflow
+torch
+torchvision
+# Use Ultralytics 8.1+ for C3k2 support
+ultralytics
+
+# Computer Vision & Utils
+opencv-python-headless
+numpy
+pillow
+scipy
+matplotlib
+
+# Utilities
+python-dotenv
+
+# Note: Removed PyQt5 and fpdf as they're not needed for backend server
+# If you need them, add them back
