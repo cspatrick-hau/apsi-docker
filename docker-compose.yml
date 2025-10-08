@@ -1,0 +1,34 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: arnis-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/models:/app/models
+    environment:
+      - TZ=Asia/Manila
+    restart: unless-stopped
+    # Only enable this on Linux if you have a camera device
+    # devices:
+    #   - /dev/video0:/dev/video0
+    # Optional healthcheck to make sure backend is ready
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: arnis-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
