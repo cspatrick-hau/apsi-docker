@@ -33,7 +33,7 @@ function App() {
     socketRef.current = io(process.env.REACT_APP_BACKEND_URL || "http://localhost:5000");
  // adjust host if backend differs
     const socket = socketRef.current;
-
+ 
     socket.on("connect", () => {
       console.log("Connected to backend:", socket.id);
     });
