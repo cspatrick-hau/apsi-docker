@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   backend:
     build:
@@ -10,11 +12,8 @@ services:
       - ./backend/models:/app/models
     environment:
       - TZ=Asia/Manila
+      - PYTHONUNBUFFERED=1
     restart: unless-stopped
-    # Only enable this on Linux if you have a camera device
-    # devices:
-    #   - /dev/video0:/dev/video0
-    # Optional healthcheck to make sure backend is ready
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 10s
@@ -27,8 +26,11 @@ services:
       dockerfile: Dockerfile
     container_name: arnis-frontend
     ports:
-      - "3000:80"
+      - "8080:80"
     depends_on:
       backend:
         condition: service_healthy
+    environment:
+      # 👇 This tells your React app where the backend lives inside Docker
+      - REACT_APP_BACKEND_URL=http://arnis-backend:5000
     restart: unless-stopped
