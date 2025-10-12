@@ -69,29 +69,43 @@ try:
     model_path = "models/convlstm_v3_converted.h5"
     if not os.path.exists(model_path):
         print(f"✗ CNN-LSTM model not found at: {model_path}")
+        print("  Note: Run conversion script first or use YOLO-only mode")
     else:
         print(f"Model path: {model_path}")
-        from tensorflow.keras.mixed_precision import Policy
-
+        
+        # Custom DTypePolicy class for compatibility
         class DummyDTypePolicy:
             def __init__(self, name="float32"):
                 self.name = name
                 self.compute_dtype = name
                 self.variable_dtype = name
+
             def __repr__(self):
                 return f"DummyDTypePolicy({self.name})"
+
             def get_config(self):
                 return {"name": self.name}
 
-        custom_objects = {"DummyDTypePolicy": DummyDTypePolicy, "Policy": Policy}
+            @classmethod
+            def from_config(cls, config):
+                """Needed by Keras deserialization during model loading."""
+                return cls(**config)
+
+        try:
+            from tensorflow.keras.mixed_precision import Policy
+            custom_objects = {"DummyDTypePolicy": DummyDTypePolicy, "Policy": Policy}
+        except:
+            custom_objects = {"DummyDTypePolicy": DummyDTypePolicy}
+        
         print("[INFO] Attempting to load with custom object scope...")
         with tf.keras.utils.custom_object_scope(custom_objects):
             cnn_lstm_model = tf.keras.models.load_model(model_path, compile=False, safe_mode=False)
-        print("✓ CNN-LSTM model loaded successfully (custom dtype-safe)!")
+        print("✓ CNN-LSTM model loaded successfully!")
         print(f"  Input shape: {cnn_lstm_model.input_shape}")
         print(f"  Output shape: {cnn_lstm_model.output_shape}")
 except Exception as e:
     print(f"✗ Error loading CNN-LSTM model: {e}")
+    print("  Continuing with YOLO-only mode...")
     traceback.print_exc()
 
 print("\n" + "=" * 60)
@@ -108,7 +122,7 @@ frame_sequences = {
     "camera_3": deque(maxlen=30),
 }
 
-cnn_lstm_counter = 0  # 🔁 used for throttling
+cnn_lstm_counter = 0  # 🔄 used for throttling
 
 VALID_PARTS = [
     "Head", "Body", "Legs", "Chest & Abdomen",
@@ -116,6 +130,7 @@ VALID_PARTS = [
 ]
 
 def calculate_iou(box1, box2):
+    """Calculate Intersection over Union between two bounding boxes."""
     x1_min, y1_min, x1_max, y1_max = box1
     x2_min, y2_min, x2_max, y2_max = box2
     inter_x_min = max(x1_min, x2_min)
@@ -131,6 +146,7 @@ def calculate_iou(box1, box2):
     return inter_area / union_area if union_area > 0 else 0.0
 
 def classify_hit(player_box, stick_box):
+    """Classify which body part was hit based on stick position."""
     px_min, py_min, px_max, py_max = player_box
     sx_min, sy_min, sx_max, sy_max = stick_box
     player_height = max(py_max - py_min, 1)
@@ -146,6 +162,7 @@ def classify_hit(player_box, stick_box):
         return "Legs"
 
 def detect_cnn_lstm_action(frames):
+    """Detect action using CNN-LSTM model."""
     if cnn_lstm_model is None or len(frames) < 20:
         return "no_action", 0.0
     try:
@@ -162,6 +179,7 @@ def detect_cnn_lstm_action(frames):
 
 @socketio.on("process_frame")
 def handle_frame(data):
+    """Process incoming frame from frontend."""
     global cnn_lstm_counter
     try:
         camera_id = data.get("camera_id", "camera_1")
@@ -202,10 +220,11 @@ def handle_frame(data):
                 elif "red" in cname and "stick" in cname:
                     red_sticks.append((bbox, conf))
 
-            # Check for hits
+            # Check for hits - Red stick hits Blue player
             for rs, sc in red_sticks:
                 for bp, _ in blue_players:
-                    if calculate_iou(rs, bp) > 0.05:
+                    iou = calculate_iou(rs, bp)
+                    if iou > 0.05:
                         part = classify_hit(bp, rs)
                         detections.append({
                             "scored_by": "Red",
@@ -214,9 +233,12 @@ def handle_frame(data):
                             "confidence": sc * 100,
                             "method": "YOLO"
                         })
+            
+            # Check for hits - Blue stick hits Red player
             for bs, sc in blue_sticks:
                 for rp, _ in red_players:
-                    if calculate_iou(bs, rp) > 0.05:
+                    iou = calculate_iou(bs, rp)
+                    if iou > 0.05:
                         part = classify_hit(rp, bs)
                         detections.append({
                             "scored_by": "Blue",
@@ -228,7 +250,7 @@ def handle_frame(data):
 
         # --- CNN-LSTM Detection (throttled) ---
         cnn_lstm_counter += 1
-        run_cnn_lstm = (cnn_lstm_counter % 5 == 0)  # 🔁 run every 5 frames
+        run_cnn_lstm = (cnn_lstm_counter % 5 == 0)  # Run every 5 frames
 
         if mode == "yolo_cnn" and cnn_lstm_model is not None and run_cnn_lstm:
             action, conf = detect_cnn_lstm_action(frame_sequences[camera_id])
@@ -256,6 +278,7 @@ def handle_frame(data):
                     "method": "CNN-LSTM"
                 })
 
+        # Encode and send response
         _, buffer = cv2.imencode(".jpg", annotated_frame)
         encoded_frame = base64.b64encode(buffer).decode("utf-8")
         emit("detection_result", {
@@ -267,6 +290,30 @@ def handle_frame(data):
         print(f"Error processing frame: {e}")
         traceback.print_exc()
         emit("error", {"message": str(e)})
+
+@socketio.on("connect")
+def handle_connect():
+    """Handle client connection."""
+    print(f"[INFO] Client connected: {request.sid}")
+    emit("connection_status", {
+        "status": "connected",
+        "yolo_available": yolo_model is not None,
+        "cnn_lstm_available": cnn_lstm_model is not None
+    })
+
+@socketio.on("disconnect")
+def handle_disconnect():
+    """Handle client disconnection."""
+    print(f"[INFO] Client disconnected: {request.sid}")
+
+@app.route("/health")
+def health():
+    """Health check endpoint."""
+    return jsonify({
+        "status": "healthy",
+        "yolo_loaded": yolo_model is not None,
+        "cnn_lstm_loaded": cnn_lstm_model is not None
+    })
 
 if __name__ == "__main__":
     print("\n" + "=" * 60)
