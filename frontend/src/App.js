@@ -6,7 +6,6 @@ function App() {
   const socketRef = useRef(null);
   const [showCnnLstmLog, setShowCnnLstmLog] = useState(false);
 
-
   const [cameras, setCameras] = useState([]);
   const [selectedDevices, setSelectedDevices] = useState(["", "", ""]);
   const [streams, setStreams] = useState([null, null, null]);
@@ -20,20 +19,15 @@ function App() {
   const [captureIntervals, setCaptureIntervals] = useState([null, null, null]);
   const [globalDetectionRunning, setGlobalDetectionRunning] = useState(false);
 
-  // annotated frames from backend
   const [annotatedFrames, setAnnotatedFrames] = useState(["", "", ""]);
-
-  // detection mode
   const [detectionMode, setDetectionMode] = useState("yolo_cnn");
-
-  const CAPTURE_FPS = 5; // frames per second
+  const CAPTURE_FPS = 5;
 
   // socket setup
   useEffect(() => {
     socketRef.current = io(process.env.REACT_APP_BACKEND_URL || "http://localhost:5000");
- // adjust host if backend differs
     const socket = socketRef.current;
- 
+
     socket.on("connect", () => {
       console.log("Connected to backend:", socket.id);
     });
@@ -43,14 +37,12 @@ function App() {
         const cameraId = data.camera_id;
         const index = cameraId.endsWith("1") ? 0 : cameraId.endsWith("2") ? 1 : 2;
 
-        // update annotated frame
         setAnnotatedFrames((prev) => {
           const updated = [...prev];
           updated[index] = data.frame;
           return updated;
         });
 
-        // process detections
         const detections = data.detections || [];
         detections.forEach((det) => {
           const now = new Date().toLocaleTimeString();
@@ -68,7 +60,6 @@ function App() {
             return newLogs;
           });
 
-          // update score
           if (det.valid) {
             setScores((prevScores) => {
               const updated = [...prevScores];
@@ -94,33 +85,61 @@ function App() {
     };
   }, []);
 
-  // enumerate cameras
+  // ✅ Camera permission + enumeration
   useEffect(() => {
     const getCameras = async () => {
       try {
+        // Request permission first
+        await navigator.mediaDevices.getUserMedia({ video: true });
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter((d) => d.kind === "videoinput");
         setCameras(videoDevices);
         setSelectedDevices(videoDevices.slice(0, 3).map((d) => d.deviceId));
       } catch (err) {
-        console.error("Failed to enumerate devices:", err);
+        console.error("Camera access denied or unavailable:", err);
+        alert("Please allow camera access and refresh the page.");
       }
     };
     getCameras();
   }, []);
 
-  const captureFrameDataUrl = (stream, canvasEl) => {
-    if (!stream || !canvasEl) return null;
-    const track = stream.getVideoTracks()[0];
-    const imageCapture = new ImageCapture(track);
-    return imageCapture.grabFrame().then((bitmap) => {
-      canvasEl.width = bitmap.width;
-      canvasEl.height = bitmap.height;
-      const ctx = canvasEl.getContext("2d");
-      ctx.drawImage(bitmap, 0, 0, bitmap.width, bitmap.height);
-      return canvasEl.toDataURL("image/jpeg", 0.7);
+  // ✅ Sync streams to video elements
+  useEffect(() => {
+    const videos = document.querySelectorAll("video");
+    streams.forEach((stream, i) => {
+      const video = videos[i];
+      if (video) video.srcObject = stream || null;
     });
-  };
+  }, [streams]);
+
+  const captureFrameDataUrl = (stream, canvasEl) => {
+  if (!stream || !canvasEl) return null;
+  const videoTrack = stream.getVideoTracks()[0];
+  if (!videoTrack) return null;
+
+  // Draw directly from live stream
+  const video = document.createElement("video");
+  video.srcObject = new MediaStream([videoTrack]);
+  video.play();
+
+  return new Promise((resolve) => {
+    video.onloadeddata = () => {
+      try {
+        canvasEl.width = video.videoWidth;
+        canvasEl.height = video.videoHeight;
+        const ctx = canvasEl.getContext("2d");
+        ctx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight);
+        const dataUrl = canvasEl.toDataURL("image/jpeg", 0.7);
+        video.pause();
+        video.srcObject = null;
+        resolve(dataUrl);
+      } catch (err) {
+        console.error("Frame capture failed:", err);
+        resolve(null);
+      }
+    };
+  });
+};
 
   const startStream = async (index) => {
     if (!selectedDevices[index]) {
@@ -137,8 +156,10 @@ function App() {
         updated[index] = stream;
         return updated;
       });
+      console.log(`Camera ${index + 1} started successfully`);
     } catch (err) {
       console.error("Error starting stream:", err);
+      alert("Failed to start camera. Check permissions or other apps using it.");
     }
   };
 
@@ -166,6 +187,7 @@ function App() {
     });
   };
 
+  // --- everything else stays identical ---
   const startDetection = (index) => {
     if (!streams[index]) {
       alert(`Start preview first for Camera ${index + 1}`);
@@ -247,7 +269,7 @@ function App() {
     }
   };
 
-  return (
+return (
     <div style={{ padding: 20, fontFamily: "Arial" }}>
       <h2>ArniScore: Arnis Strike Detection System</h2>
 
